@@ -6,6 +6,3 @@ edition = "2021"
 [build-dependencies]
 bindgen = "0.69.2"
 cmake = "0.1"
-
-[profile.release]
-lto = true

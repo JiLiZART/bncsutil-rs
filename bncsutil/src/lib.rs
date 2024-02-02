@@ -1,5 +1,7 @@
 extern crate bncsutil_sys as bncsutil;
 extern crate libc;
+
+use bytes::{BufMut, BytesMut};
 use std::ffi::CString;
 use std::os::raw::c_char;
 use std::path::Path;
@@ -135,6 +137,59 @@ pub fn keydecode_quick(
     }
 }
 
+pub fn create_key_info(cd_key: String, client_token: u32, server_token: u32) -> Vec<u8> {
+    let keylen = cd_key.len();
+    let (public_value, product, hash) = keydecode_quick(cd_key, client_token, server_token);
+
+    let mut b = BytesMut::new();
+
+    b.put_u32(keylen as u32);
+    b.put_u32(product);
+    b.put_u32(public_value);
+    b.put(&b"\x00\x00\x00\x00"[..]);
+    b.put(&hash[..]);
+
+    b.to_vec()
+}
+
+pub fn pvpgn_password_hash(password: String) -> String {
+    unsafe {
+        let mut outBuffer = [0i8; 20];
+        let pass = CString::new(password).unwrap();
+
+        dbg!("pvpgn_password_hash");
+
+        bncsutil::hashPassword(pass.as_ptr(), outBuffer.as_mut_ptr());
+
+        return CString::from_raw(outBuffer.as_mut_ptr())
+            .to_string_lossy()
+            .to_string();
+    }
+}
+#[derive(Debug)]
+pub struct NLS {
+    n: *mut bncsutil::_nls,
+}
+
+impl Drop for NLS {
+    fn drop(&mut self) {
+        unsafe {
+            bncsutil::nls_free(self.n);
+        }
+    }
+}
+
+impl NLS {
+    pub fn new(username: String, password: String) -> Self {
+        unsafe {
+            let name = CString::new(username).unwrap();
+            let pass = CString::new(password).unwrap();
+            let n = bncsutil::nls_init(name.as_ptr(), pass.as_ptr());
+
+            Self { n }
+        }
+    }
+}
 #[cfg(test)]
 mod bncs_tests {
     use super::*;
@@ -151,10 +206,11 @@ mod bncs_tests {
 
     #[test]
     fn test_get_exe_info() {
-        let path = Path::new("../mock/war3.exe");
-        let info = String::from("war3.exe 12/09/16 06:05:09 515048");
+        let war3 = Path::new("../mock/war3.exe");
 
-        assert_eq!(get_exe_info(path), (33 as i32, info, 18547117 as u32));
+        let info = String::from("war3.exe 02/02/24 12:39:34 562152");
+
+        assert_eq!(get_exe_info(war3), (33 as i32, info, 18613504 as u32));
     }
 
     #[test]
@@ -166,7 +222,7 @@ mod bncs_tests {
 
         assert_eq!(
             check_revision_flat(value, file1, file2, file3, 1),
-            1076278704 as u32
+            2392268693 as u32
         )
     }
 
@@ -176,7 +232,7 @@ mod bncs_tests {
         let file1 = Path::new("../mock/war3.exe");
         let files = vec![file1];
 
-        assert_eq!(check_revision(value, files, 1), 3796461076 as u32)
+        assert_eq!(check_revision(value, files, 1), 1397123850 as u32)
     }
 
     // {
@@ -191,17 +247,32 @@ mod bncs_tests {
         let client_token: u32 = 130744796;
         let server_token: u32 = 2115470359;
         let result_vec: Vec<u8> = vec![
-            81, 78, 135, 115, 190, 107, 211, 30, 62, 86, 64, 112, 162, 230, 136, 132, 198, 76, 8,
-            165,
+            16, 95, 106, 232, 69, 15, 81, 141, 27, 2, 250, 43, 67, 21, 89, 120, 196, 223, 45, 222,
         ];
         //        let result_hash = String::from("0 0 0 0 0 0 0 0");
         let (public_value, product, hash) = keydecode_quick(cd_key, client_token, server_token);
 
-        println!("jkeycode qucik {:?} {:?} {:?}", public_value, product, hash);
+        println!("keycode quick {:?} {:?} {:?}", public_value, product, hash);
+
+        assert_eq!(public_value, 27769709 as u32);
+        assert_eq!(product, 5650 as u32);
+        assert_eq!(hash, result_vec);
+    }
+
+    #[test]
+    fn test_create_key_info() {
+        let cd_key = String::from("FFFFFFFFFFFFFFFFFFFFFFFFFF");
+        let client_token: u32 = 130744796;
+        let server_token: u32 = 2115470359;
+
+        let key_info = create_key_info(cd_key, client_token, server_token);
 
         assert_eq!(
-            (public_value, product, hash),
-            (10992493 as u32, 5650 as u32, result_vec)
+            key_info,
+            vec![
+                0, 0, 0, 26, 0, 0, 22, 18, 1, 167, 187, 109, 0, 0, 0, 0, 16, 95, 106, 232, 69, 15,
+                81, 141, 27, 2, 250, 43, 67, 21, 89, 120, 196, 223, 45, 222
+            ]
         )
     }
 }
