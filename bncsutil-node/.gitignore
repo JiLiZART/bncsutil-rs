@@ -1,0 +1,14 @@
+native/target
+native/index.node
+native/artifacts.json
+native/bncsutil/build/CMakeFiles
+**/*~
+**/node_modules
+**/.DS_Store
+./.idea
+.idea
+target
+*.node
+artifacts.json
+bncsutil/build/CMakeFiles
+node_modules

@@ -1,0 +1,3 @@
+[submodule "deps/bncsutil"]
+	path = deps/bncsutil
+	url = git@github.com:BNETDocs/bncsutil.git

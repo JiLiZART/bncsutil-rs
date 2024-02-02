@@ -1,0 +1,22 @@
+[package]
+edition = "2018"
+name = "bncsutil-node"
+version = "0.1.0"
+authors = ["Nikolay Kostyurin <jilizart@gmail.com>"]
+exclude = ["artifacts.json", "index.node"]
+build = "build.rs"
+
+[lib]
+crate-type = ["cdylib"]
+name = "bncsutil_node"
+
+[dependencies]
+napi = "2.15.0"
+napi-derive = "2.15.0"
+bncsutil = { path = "../bncsutil" }
+
+[build-dependencies]
+napi-build = "2.1.0"
+
+[profile.release]
+lto = true
