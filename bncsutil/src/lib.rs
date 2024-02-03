@@ -6,25 +6,26 @@ use std::ffi::CString;
 use std::os::raw::c_char;
 use std::path::Path;
 
+mod auth;
 mod nls;
 
 pub fn version() -> u64 {
     unsafe { bncsutil::bncsutil_getVersion() }
 }
 
-pub fn version_string() -> String {
-    unsafe {
-        let mut exe_info_vec: Vec<i8> = vec![0i8; 1024];
-        let exe_info_slice = exe_info_vec.as_mut_slice();
-        let exe_info_ptr = exe_info_slice.as_mut_ptr();
-        let length = bncsutil::bncsutil_getVersionString(exe_info_ptr);
-        let exe_info_string =
-            String::from_utf8(exe_info_slice.iter().map(|&c| c as u8).collect()).unwrap();
-        let exe_info: String = exe_info_string.chars().take(length as usize).collect();
+// pub fn version_string() -> String {
+//     unsafe {
+//         let mut ver = CString::new("").unwrap();
+//         let mut raw_ver = ver.into_raw();
+//         let length = bncsutil::bncsutil_getVersionString(raw_ver);
 
-        exe_info
-    }
-}
+//         dbg!(length);
+
+//         let version = CString::from_raw(raw_ver).to_string_lossy().to_string();
+
+//         version
+//     }
+// }
 
 pub fn get_exe_info(path: &Path) -> (i32, String, u32) {
     unsafe {
@@ -46,7 +47,7 @@ pub fn get_exe_info(path: &Path) -> (i32, String, u32) {
     }
 }
 
-pub fn check_revision(value: String, files: Vec<&Path>, mpq_number: i32) -> u32 {
+pub fn check_revision(value: String, files: Vec<&Path>, mpq_number: u32) -> u64 {
     unsafe {
         let files_str = files
             .iter()
@@ -65,13 +66,17 @@ pub fn check_revision(value: String, files: Vec<&Path>, mpq_number: i32) -> u32 
             value_cstr.as_ptr(),
             files_ptr.as_mut_ptr(),
             files_str.len() as i32,
-            mpq_number,
+            (mpq_number as i32).try_into().unwrap(),
             &mut result,
         );
 
-        println!("result {:?}", result as u32);
+        println!("check_revision result {:?} err: {}", result, error_code);
 
-        result as u32
+        if error_code != 0 {
+            panic!("check_revision error: {}", error_code);
+        }
+
+        result
     }
 }
 
@@ -80,12 +85,22 @@ pub fn check_revision_flat(
     file1: &Path,
     file2: &Path,
     file3: &Path,
-    mpq_number: i32,
-) -> u32 {
+    mpq_number: u32,
+) -> u64 {
     unsafe {
-        let file1_str = CString::new(file1.to_str().unwrap()).unwrap();
-        let file2_str = CString::new(file2.to_str().unwrap()).unwrap();
-        let file3_str = CString::new(file3.to_str().unwrap()).unwrap();
+        if !file1.exists() {
+            panic!("File not found {}", file1.display());
+        }
+        if !file2.exists() {
+            panic!("File2 not found {}", file2.display());
+        }
+        if !file3.exists() {
+            panic!("File3 not found {}", file3.display());
+        }
+
+        let file1_str = CString::new(file1.to_str().expect("File1 error")).unwrap();
+        let file2_str = CString::new(file2.to_str().expect("File2 error")).unwrap();
+        let file3_str = CString::new(file3.to_str().expect("File3 error")).unwrap();
 
         let value_cstr = CString::new(value).unwrap();
         let mut result: u64 = 0;
@@ -95,15 +110,19 @@ pub fn check_revision_flat(
             file1_str.as_ptr(),
             file2_str.as_ptr(),
             file3_str.as_ptr(),
-            mpq_number,
+            (mpq_number as i32).try_into().unwrap(),
             &mut result,
         );
 
-        result as u32
+        println!(
+            "check_revision_flat result {:?} err: {}",
+            result, error_code
+        );
+
+        result
     }
 }
 
-// { CDKey: 'FFFFFFFFFFFFFFFFFFFFFFFFFF', clientToken: 130744796, serverToken: 1655005115 } { publicValue: 10992493, product: 5650, hash: '0 0 0 0 0 0 0 0' }
 pub fn keydecode_quick(
     cd_key: String,
     client_token: u32,
@@ -114,22 +133,11 @@ pub fn keydecode_quick(
             panic!("Invalid Warcraft 3 Key provided");
         }
 
-        let cd_key_str = CString::new(cd_key).unwrap();
+        let cd_key_str = CString::new(cd_key).expect("Failed cd_key c_string");
         let mut public_value = 0 as u32;
         let mut product = 0 as u32;
         let mut hash_buf = [0i8; 20];
 
-        /*
-           MEXP(int) kd_quick(
-               const char* cd_key,
-               uint32_t client_token,
-               uint32_t server_token,
-               uint32_t* public_value,
-               uint32_t* product,
-               char* hash_buffer,
-               size_t buffer_len
-           )
-        */
         let status = bncsutil::kd_quick(
             cd_key_str.as_ptr(),
             client_token,
@@ -140,15 +148,15 @@ pub fn keydecode_quick(
             hash_buf.len(),
         );
 
-        if status == 0 {
+        if status != 1 {
             panic!("Failed to kd_quick")
         }
 
-        (
+        return (
             public_value.clone(),
             product.clone(),
             Vec::from(hash_buf.map(|c| c as u8)),
-        )
+        );
     }
 }
 
@@ -179,6 +187,26 @@ pub fn pvpgn_password_hash(password: String) -> Vec<u8> {
         Vec::from(out_buf.map(|c| c as u8))
     }
 }
+
+/**
+ * extracts number from file name "ver-IX86-1.mpq"
+ */
+pub fn extract_mpq_number(name: String) -> Option<u32> {
+    if name.len() == 0 || !name.contains(".") {
+        return None;
+    }
+
+    let parts: Vec<&str> = name.split(".").collect();
+    let first = parts.first().unwrap();
+    let first_parts: Vec<&str> = first.split("-").collect();
+    let last_num = first_parts.last().unwrap();
+    let num: u32 = last_num
+        .parse()
+        .expect("expect number in extract_MPQ_number");
+
+    Some(num)
+}
+
 #[cfg(test)]
 mod bncs_tests {
     use super::*;
@@ -188,10 +216,10 @@ mod bncs_tests {
         assert_eq!(version(), 10300);
     }
 
-    #[test]
-    fn test_version_string() {
-        assert_eq!(version_string(), "1.3.0");
-    }
+    // #[test]
+    // fn test_version_string() {
+    //     assert_eq!(version_string(), "1.3.0");
+    // }
 
     #[test]
     fn test_get_exe_info() {
@@ -211,7 +239,7 @@ mod bncs_tests {
 
         assert_eq!(
             check_revision_flat(value, file1, file2, file3, 1),
-            2392268693 as u32
+            2392268693 as u64
         )
     }
 
@@ -221,7 +249,7 @@ mod bncs_tests {
         let file1 = Path::new("../mock/war3.exe");
         let files = vec![file1];
 
-        assert_eq!(check_revision(value, files, 1), 1397123850 as u32)
+        assert_eq!(check_revision(value, files, 1), 1397123850 as u64)
     }
 
     // {
@@ -272,5 +300,12 @@ mod bncs_tests {
                 104, 62
             ]
         )
+    }
+
+    #[test]
+    fn test_extract_mpq_number() {
+        let ver = extract_mpq_number("ver-IX86-1.mpq".to_string());
+
+        assert_eq!(ver, Some(1));
     }
 }

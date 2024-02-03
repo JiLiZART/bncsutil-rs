@@ -52,10 +52,10 @@ fn version() -> f64 {
     bncs::version() as f64
 }
 
-#[napi]
-fn version_string() -> String {
-    bncs::version_string()
-}
+// #[napi]
+// fn version_string() -> String {
+//     bncs::version_string()
+// }
 
 #[napi(object)]
 pub struct ExeInfo {
@@ -76,10 +76,10 @@ fn get_exe_info(path_string: String) -> ExeInfo {
 
 // value: String, files: Vec<&Path>, mpqNumber: i32
 #[napi]
-fn check_revision(value: String, files: Vec<String>, mpq_number: i32) -> u32 {
+fn check_revision(value: String, files: Vec<String>, mpq_number: u32) -> i64 {
     let files_ref = files.iter().map(|val| Path::new(val.as_str())).collect();
 
-    bncs::check_revision(value, files_ref, mpq_number as i32)
+    bncs::check_revision(value, files_ref, mpq_number) as i64
 }
 
 // value: String, file1: &Path, file2: &Path, file3: &Path, mpq_number: i32
@@ -89,10 +89,10 @@ fn check_revision_flat(
     file1: String,
     file2: String,
     file3: String,
-    mpq_number: i32,
-) -> u32 {
+    mpq_number: u32,
+) -> i64 {
     let files = vec![file1, file2, file3];
     let files_ref = files.iter().map(|val| Path::new(val.as_str())).collect();
 
-    bncs::check_revision(value, files_ref, mpq_number as i32)
+    bncs::check_revision(value, files_ref, mpq_number as u32) as i64
 }
