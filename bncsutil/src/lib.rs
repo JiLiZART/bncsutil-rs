@@ -6,6 +6,8 @@ use std::ffi::CString;
 use std::os::raw::c_char;
 use std::path::Path;
 
+mod nls;
+
 pub fn version() -> u64 {
     unsafe { bncsutil::bncsutil_getVersion() }
 }
@@ -108,42 +110,55 @@ pub fn keydecode_quick(
     server_token: u32,
 ) -> (u32, u32, Vec<u8>) {
     unsafe {
-        let cd_key_str = CString::new(cd_key).unwrap();
-        let mut public_value: u32 = 0;
-        let mut product: u32 = 0;
-        let mut hash_buffer_vec: Vec<i8> = vec![0i8; 20];
-        let hash_buffer_slice = hash_buffer_vec.as_mut_slice();
-        let hash_buffer_ptr = hash_buffer_slice.as_mut_ptr();
+        if cd_key.len() != 26 {
+            panic!("Invalid Warcraft 3 Key provided");
+        }
 
+        let cd_key_str = CString::new(cd_key).unwrap();
+        let mut public_value = 0 as u32;
+        let mut product = 0 as u32;
+        let mut hash_buf = [0i8; 20];
+
+        /*
+           MEXP(int) kd_quick(
+               const char* cd_key,
+               uint32_t client_token,
+               uint32_t server_token,
+               uint32_t* public_value,
+               uint32_t* product,
+               char* hash_buffer,
+               size_t buffer_len
+           )
+        */
         let status = bncsutil::kd_quick(
             cd_key_str.as_ptr(),
             client_token,
             server_token,
             &mut public_value,
             &mut product,
-            hash_buffer_ptr,
-            20 as usize,
+            hash_buf.as_mut_ptr(),
+            hash_buf.len(),
         );
 
         if status == 0 {
             panic!("Failed to kd_quick")
         }
 
-        let hash_buffer_char_vec: Vec<u8> = hash_buffer_slice.iter().map(|&c| c as u8).collect();
-
-        //        let hash_buffer_string = String::from_utf8(hash_buffer_char_vec).expect("Failed to convert hash to string");
-
-        (public_value, product, hash_buffer_char_vec)
+        (
+            public_value.clone(),
+            product.clone(),
+            Vec::from(hash_buf.map(|c| c as u8)),
+        )
     }
 }
 
 pub fn create_key_info(cd_key: String, client_token: u32, server_token: u32) -> Vec<u8> {
-    let keylen = cd_key.len();
+    let keylen = cd_key.len().clone() as u32;
     let (public_value, product, hash) = keydecode_quick(cd_key, client_token, server_token);
 
     let mut b = BytesMut::new();
 
-    b.put_u32(keylen as u32);
+    b.put_u32(keylen);
     b.put_u32(product);
     b.put_u32(public_value);
     b.put(&b"\x00\x00\x00\x00"[..]);
@@ -152,42 +167,16 @@ pub fn create_key_info(cd_key: String, client_token: u32, server_token: u32) -> 
     b.to_vec()
 }
 
-pub fn pvpgn_password_hash(password: String) -> String {
+pub fn pvpgn_password_hash(password: String) -> Vec<u8> {
     unsafe {
-        let mut outBuffer = [0i8; 20];
+        let mut out_buf = [0i8; 20];
         let pass = CString::new(password).unwrap();
 
-        dbg!("pvpgn_password_hash");
+        bncsutil::hashPassword(pass.as_ptr(), out_buf.as_mut_ptr());
 
-        bncsutil::hashPassword(pass.as_ptr(), outBuffer.as_mut_ptr());
+        dbg!(pass);
 
-        return CString::from_raw(outBuffer.as_mut_ptr())
-            .to_string_lossy()
-            .to_string();
-    }
-}
-#[derive(Debug)]
-pub struct NLS {
-    n: *mut bncsutil::_nls,
-}
-
-impl Drop for NLS {
-    fn drop(&mut self) {
-        unsafe {
-            bncsutil::nls_free(self.n);
-        }
-    }
-}
-
-impl NLS {
-    pub fn new(username: String, password: String) -> Self {
-        unsafe {
-            let name = CString::new(username).unwrap();
-            let pass = CString::new(password).unwrap();
-            let n = bncsutil::nls_init(name.as_ptr(), pass.as_ptr());
-
-            Self { n }
-        }
+        Vec::from(out_buf.map(|c| c as u8))
     }
 }
 #[cfg(test)]
@@ -208,14 +197,14 @@ mod bncs_tests {
     fn test_get_exe_info() {
         let war3 = Path::new("../mock/war3.exe");
 
-        let info = String::from("war3.exe 02/02/24 12:39:34 562152");
+        let info = "war3.exe 02/02/24 12:39:34 562152".to_string();
 
         assert_eq!(get_exe_info(war3), (33 as i32, info, 18613504 as u32));
     }
 
     #[test]
     fn test_check_revision_flat() {
-        let value = String::from("B=454282227 C=2370009462 A=2264812340 4 A=A^S B=B-C C=C-A A=A+B");
+        let value = "B=454282227 C=2370009462 A=2264812340 4 A=A^S B=B-C C=C-A A=A+B".to_string();
         let file1 = Path::new("../mock/war3.exe");
         let file2 = Path::new("../mock/Storm.dll");
         let file3 = Path::new("../mock/game.dll");
@@ -228,7 +217,7 @@ mod bncs_tests {
 
     #[test]
     fn test_check_revision() {
-        let value = String::from("B=454282227 C=2370009462 A=2264812340 4 A=A^S B=B-C C=C-A A=A+B");
+        let value = "B=454282227 C=2370009462 A=2264812340 4 A=A^S B=B-C C=C-A A=A+B".to_string();
         let file1 = Path::new("../mock/war3.exe");
         let files = vec![file1];
 
@@ -243,7 +232,7 @@ mod bncs_tests {
     // product: 5650, hash: '81 78 135 115 190 107 211 30 62 86 64 112 162 230 136 132 198 76 8 165
     #[test]
     fn test_keydecode_quick() {
-        let cd_key = String::from("FFFFFFFFFFFFFFFFFFFFFFFFFF");
+        let cd_key = "FFFFFFFFFFFFFFFFFFFFFFFFFF".to_string();
         let client_token: u32 = 130744796;
         let server_token: u32 = 2115470359;
         let result_vec: Vec<u8> = vec![
@@ -252,8 +241,6 @@ mod bncs_tests {
         //        let result_hash = String::from("0 0 0 0 0 0 0 0");
         let (public_value, product, hash) = keydecode_quick(cd_key, client_token, server_token);
 
-        println!("keycode quick {:?} {:?} {:?}", public_value, product, hash);
-
         assert_eq!(public_value, 27769709 as u32);
         assert_eq!(product, 5650 as u32);
         assert_eq!(hash, result_vec);
@@ -261,7 +248,7 @@ mod bncs_tests {
 
     #[test]
     fn test_create_key_info() {
-        let cd_key = String::from("FFFFFFFFFFFFFFFFFFFFFFFFFF");
+        let cd_key = "FFFFFFFFFFFFFFFFFFFFFFFFFF".to_string();
         let client_token: u32 = 130744796;
         let server_token: u32 = 2115470359;
 
@@ -272,6 +259,17 @@ mod bncs_tests {
             vec![
                 0, 0, 0, 26, 0, 0, 22, 18, 1, 167, 187, 109, 0, 0, 0, 0, 16, 95, 106, 232, 69, 15,
                 81, 141, 27, 2, 250, 43, 67, 21, 89, 120, 196, 223, 45, 222
+            ]
+        )
+    }
+
+    #[test]
+    fn test_pvpgn_password_hash() {
+        assert_eq!(
+            pvpgn_password_hash("pass".to_string()),
+            vec![
+                110, 200, 23, 20, 119, 166, 65, 4, 164, 164, 111, 5, 24, 230, 149, 79, 255, 64,
+                104, 62
             ]
         )
     }
