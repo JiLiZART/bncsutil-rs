@@ -14,6 +14,7 @@ fn main() {
     let dst = cfg
         .define("USE_SYSTEM_LIBS", "1")
         .define("USE_GMP", "1")
+        .profile("Release")
         .build();
 
     println!("cargo:rustc-link-search=native={}/build/", dst.display());
